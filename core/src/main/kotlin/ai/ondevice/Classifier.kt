@@ -27,8 +27,8 @@ fun topK(probs: FloatArray, labels: List<String>, k: Int): List<Prediction> {
 }
 
 class OnDeviceClassifier(
-    private val floatMlp: Mlp,
-    private val quantizedMlp: QuantizedMlp,
+    val floatMlp: Mlp,
+    val quantizedMlp: QuantizedMlp,
     val labels: List<String>,
 ) {
     /** Set false to run the float model instead of the quantized one. */
@@ -58,5 +58,17 @@ class OnDeviceClassifier(
         val times = DoubleArray(runs) { classify(input).latencyMs }
         times.sort()
         return times.average() to times[times.size / 2]
+    }
+
+    /**
+     * Raw per-inference latencies (ms), first run discarded as warm-up.
+     * The reporting module in Benchmark.kt turns these into full
+     * distributions (p95/p99/throughput); [benchmark] stays as the
+     * mean/p50 shortcut the demo console output uses.
+     */
+    fun benchmarkTimes(input: FloatArray, runs: Int = 200): DoubleArray {
+        require(runs > 0) { "runs must be positive" }
+        classify(input) // warm-up, discarded
+        return DoubleArray(runs) { classify(input).latencyMs }
     }
 }
