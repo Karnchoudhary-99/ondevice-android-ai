@@ -14,8 +14,8 @@ without touching the core.
 
 - [x] Project scaffold (Gradle, README, CI)
 - [x] On-device inference pipeline (custom lightweight runtime — see below)
-- [ ] Camera + gallery input with live results
-- [ ] Model management (bundled model, download-once, versioning)
+- [x] Camera + gallery input with live results (simulated camera + gallery PNG/JPEG, smoothed voting)
+- [x] Model management (bundled model, download-once, versioning, integrity checks)
 - [ ] Benchmarks (latency, model size) + demo
 - [ ] Self-review checklist, then public
 
@@ -35,11 +35,14 @@ core/   ai.ondevice — no dependencies, no Android SDK
   Quantization.kt  symmetric int8 quantization, integer-accumulation forward
   Preprocess.kt    ARGB -> grayscale -> bilinear resize -> model vector
   Model.kt         ODAI binary model format (magic + version validated)
+  Models.kt        ModelStore: download-once install, versioning, SHA-256 verify
+  Frames.kt        ImageFrame, simulated camera, gallery loading, smoothed live classifier
   Shapes.kt        synthetic 28x28 shape dataset (deterministic by seed)
   Trainer.kt       mini-batch SGD (softmax + cross-entropy, ReLU backprop)
   Classifier.kt    UI-facing API: top-k predictions + latency benchmark
-demo/   CLI: train | classify | benchmark (see examples/run-demo.sh)
+demo/   CLI: train | classify | benchmark | gallery | frames | models (see examples/run-demo.sh)
 models/ shapes-model.bin — bundled trained model (see below)
+examples/ sample-triangle.png — gallery sample (triangle, seed 7)
 ```
 
 ## Quick start
@@ -56,6 +59,44 @@ gradle :demo:run --args="train --out models/shapes-model.bin --epochs 60 --per-c
 
 # Run the tests
 gradle :core:test
+```
+
+Or the full tour: `./examples/run-demo.sh`
+
+## Model management
+
+The app never runs a model file handed to it blindly. `ModelStore`
+installs a model only after it parses as ODAI, records its SHA-256,
+and refuses downgrades; installing byte-identical bytes again is a
+no-op (download-once), and `verify` re-checks hash + parse on startup
+so a tampered file falls back to the bundled model instead of
+misclassifying.
+
+```bash
+gradle :demo:run --args="models install --from models/shapes-model.bin --name shapes-v1 --version 1 --dir model-store"
+gradle :demo:run --args="models activate --name shapes-v1 --dir model-store"
+gradle :demo:run --args="models verify --name shapes-v1 --dir model-store"
+gradle :demo:run --args="models list --dir model-store"
+# With no --model, gallery/frames/classify use the store's active model.
+```
+
+## Camera + gallery input
+
+On Android, CameraX frames and gallery bitmaps both arrive as ARGB
+pixels and go through the shared `preprocessImage` pipeline. The JVM
+demo exercises the same path with a deterministic simulated camera
+(fresh jitter + noise per frame, like a shaky hand) and real PNG/JPEG
+files from the gallery. A single frame can flicker between neighbour
+labels, so `LiveClassifier` reports the majority vote over a sliding
+window (default 5 frames) — the vote count, not one frame, is what the
+UI shows.
+
+```bash
+# Gallery: classify a real image file
+gradle :demo:run --args="gallery --image examples/sample-triangle.png --model models/shapes-model.bin"
+
+# Live camera simulation: 8 frames, smoothed output per frame
+gradle :demo:run --args="frames --frames 8 --labels triangle,triangle,circle,triangle,triangle,triangle,circle,triangle --model models/shapes-model.bin"
 ```
 
 Or the full tour: `./examples/run-demo.sh`
@@ -80,11 +121,17 @@ integer path is what actually runs fast. Accuracy is identical either way.
 
 ## Tests
 
-21 JUnit tests in `core/src/test`: tensor ops, quantization error
+31 JUnit tests in `core/src/test`: tensor ops, quantization error
 bounds and the 4x size claim, preprocessing contracts, ODAI save/load
 round-trip plus bad-magic rejection, top-k ranking, end-to-end shape
-classification, benchmark sanity, and decreasing training loss.
+classification, benchmark sanity, and decreasing training loss — plus
+the model store (download-once, downgrade rejection, corrupt-source
+safety, tamper detection, activation/removal) and the live pipeline
+(deterministic simulated camera, PNG round-trip, majority smoothing).
 CI runs `gradle build` plus a demo smoke test on every push and PR.
+Note: on this dev VM the Gradle daemon cannot talk over localhost, so
+local verification runs kotlinc + the JUnit console directly; GitHub
+Actions CI is the verification of record for the Gradle build.
 
 ## License
 
