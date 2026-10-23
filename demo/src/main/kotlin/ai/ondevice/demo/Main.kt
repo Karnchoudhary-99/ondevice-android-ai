@@ -13,8 +13,8 @@ import ai.ondevice.toArgb
 import ai.ondevice.Shapes
 import ai.ondevice.accuracy
 import ai.ondevice.renderAscii
+import ai.ondevice.runBenchmark
 import ai.ondevice.toQuantized
-import ai.ondevice.weightBytes
 import ai.ondevice.trainMlp
 import java.io.File
 import kotlin.system.exitProcess
@@ -145,17 +145,26 @@ private fun cmdBenchmark(opts: Map<String, String>) {
     val loaded = loadOrTrain(opts)
     val classifier = OnDeviceClassifier(loaded.mlp, loaded.mlp.toQuantized(), loaded.labels)
     val sample = Shapes.generate("circle", java.util.Random(1L))
-    println("Model: ${loaded.mlp.inputSize} inputs -> ${loaded.mlp.outputSize} outputs")
-    println("Float weights: ${loaded.mlp.weightBytes()} bytes; int8 weights: ${loaded.mlp.toQuantized().weightBytes()} bytes")
-    classifier.useQuantized = false
-    val (floatMean, floatP50) = classifier.benchmark(sample, runs)
-    println("float32: mean %.3f ms, p50 %.3f ms".format(floatMean, floatP50))
-    classifier.useQuantized = true
-    val (intMean, intP50) = classifier.benchmark(sample, runs)
-    println("int8:    mean %.3f ms, p50 %.3f ms".format(intMean, intP50))
     val (testX, testY) = Shapes.dataset(50, seed = 1234L)
-    println("Test accuracy float32: %.3f".format(accuracy(loaded.mlp, testX, testY)))
-    println("Test accuracy int8:    %.3f".format(accuracy(loaded.mlp.toQuantized(), testX, testY)))
+    val report = runBenchmark(classifier, sample, testX, testY, runs)
+    println("Model: ${report.modelShape}")
+    println("Float weights: ${report.floatWeightBytes} bytes; int8 weights: ${report.int8WeightBytes} bytes (${"%.1f".format(report.sizeRatio)}x smaller)")
+    println("float32: mean %.3f ms, p50 %.3f ms, p95 %.3f ms, p99 %.3f ms, %.0f inf/s".format(report.floatLatency.meanMs, report.floatLatency.p50Ms, report.floatLatency.p95Ms, report.floatLatency.p99Ms, report.floatLatency.throughputPerSec))
+    println("int8:    mean %.3f ms, p50 %.3f ms, p95 %.3f ms, p99 %.3f ms, %.0f inf/s".format(report.int8Latency.meanMs, report.int8Latency.p50Ms, report.int8Latency.p95Ms, report.int8Latency.p99Ms, report.int8Latency.throughputPerSec))
+    println("Test accuracy float32: %.3f".format(report.floatAccuracy))
+    println("Test accuracy int8:    %.3f".format(report.int8Accuracy))
+    for (i in report.floatPerLabel.indices) {
+        val f = report.floatPerLabel[i]
+        val q = report.int8PerLabel[i]
+        println("  ${f.label}: float32 %.3f, int8 %.3f (${f.total} examples)".format(f.accuracy, q.accuracy))
+    }
+    val reportPath = opts["report"]
+    if (reportPath != null) {
+        val file = File(reportPath)
+        file.parentFile?.mkdirs()
+        file.writeText(report.toMarkdown())
+        println("Wrote benchmark report to $reportPath")
+    }
 }
 
 
