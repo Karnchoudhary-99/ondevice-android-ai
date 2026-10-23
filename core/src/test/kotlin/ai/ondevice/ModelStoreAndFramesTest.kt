@@ -10,8 +10,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private fun tinyModel(dir: File, name: String): File {
-    val rng = java.util.Random(3L)
+private fun tinyModel(dir: File, name: String, seed: Long = 3L): File {
+    val rng = java.util.Random(seed)
     val mlp = Mlp(
         listOf(
             LinearLayer(xavierInit(4, 3, rng), FloatArray(4)),
@@ -53,8 +53,8 @@ class ModelStoreTest {
     @Test
     fun `downgrade and same-version-different-bytes are rejected`(@TempDir dir: File) {
         val store = ModelStore(File(dir, "store"))
-        store.install(tinyModel(dir, "m1.bin"), "tiny", 2)
-        val other = tinyModel(dir, "m2.bin") // different random weights, same shape
+        store.install(tinyModel(dir, "m1.bin", seed = 3L), "tiny", 2)
+        val other = tinyModel(dir, "m2.bin", seed = 4L) // different random weights, same shape
         assertThrows<IllegalArgumentException> { store.install(other, "tiny", 2) }
         assertThrows<IllegalArgumentException> { store.install(other, "tiny", 1) }
         // The installed v2 model survives both rejected installs.
