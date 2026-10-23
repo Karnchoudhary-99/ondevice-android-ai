@@ -1,7 +1,14 @@
 package ai.ondevice.demo
 
+import ai.ondevice.GalleryImages
+import ai.ondevice.ImageFrame
+import ai.ondevice.InstallResult
+import ai.ondevice.LiveClassifier
 import ai.ondevice.ModelFile
+import ai.ondevice.ModelStore
 import ai.ondevice.OnDeviceClassifier
+import ai.ondevice.SimulatedCamera
+import ai.ondevice.preprocessImage
 import ai.ondevice.Shapes
 import ai.ondevice.accuracy
 import ai.ondevice.renderAscii
@@ -27,10 +34,15 @@ import kotlin.system.exitProcess
 private fun usage(): Nothing {
     println(
         """
-        Usage: demo <train|classify|benchmark> [options]
+        Usage: demo <train|classify|benchmark|gallery|frames|make-png|models ...> [options]
           train     --out <path> [--epochs N] [--hidden N] [--per-class N]
           classify  [--model <path>] --shape <label> [--seed N] [--no-quantized]
           benchmark [--model <path>] [--runs N]
+          gallery   --image <png|jpg> [--model <path>] [--no-quantized]
+          frames    [--frames N] [--labels a,b] [--seed N] [--window N] [--model <path>]
+          make-png  --shape <label> [--seed N] --out <path>
+          models    install --from <path> --name <name> --version N [--dir <dir>]
+          models    list|activate|verify|remove --name <name> [--dir <dir>]
         Shapes: ${Shapes.LABELS.joinToString(", ")}
         """.trimIndent(),
     )
@@ -59,9 +71,24 @@ private fun parseOptions(args: List<String>): Map<String, String> {
     return out
 }
 
+private fun storeDir(opts: Map<String, String>): File = File(opts["dir"] ?: "model-store")
+
+/** A classifier from --model, else the store's active model, else a quick train. */
+private fun loadClassifier(opts: Map<String, String>): OnDeviceClassifier {
+    val loaded = loadOrTrain(opts)
+    val classifier = OnDeviceClassifier(loaded.mlp, loaded.mlp.toQuantized(), loaded.labels)
+    classifier.useQuantized = !("no-quantized" in opts)
+    return classifier
+}
+
 private fun loadOrTrain(opts: Map<String, String>, quickEpochs: Int = 30): ModelFile.Loaded {
     val modelPath = opts["model"]
     if (modelPath != null) return ModelFile.load(File(modelPath))
+    val active = ModelStore(storeDir(opts)).activeModelFile()
+    if (active != null) {
+        println("Using active model from the store: ${active.path}")
+        return ModelFile.load(active)
+    }
     println("No --model given; training a quick in-memory model ($quickEpochs epochs)...")
     val (xs, ys) = Shapes.dataset(perClass = 120, seed = 42L)
     val result = trainMlp(xs, ys, Shapes.LABELS.size, epochs = quickEpochs)
@@ -130,6 +157,102 @@ private fun cmdBenchmark(opts: Map<String, String>) {
     println("Test accuracy int8:    %.3f".format(accuracy(loaded.mlp.toQuantized(), testX, testY)))
 }
 
+
+private fun cmdGallery(opts: Map<String, String>) {
+    val imagePath = opts["image"] ?: run {
+        println("gallery needs --image <path>")
+        usage()
+    }
+    val frame = GalleryImages.load(File(imagePath))
+    val classifier = loadClassifier(opts)
+    val vector = preprocessImage(frame.argb, frame.width, frame.height, 28)
+    val result = classifier.classify(vector)
+    println("Image: $imagePath (${frame.width}x${frame.height}), model: ${if (classifier.useQuantized) "int8" else "float32"}")
+    for ((rank, pred) in result.predictions.withIndex()) {
+        println("#${rank + 1} ${pred.label} — %.1f%%".format(pred.confidence * 100))
+    }
+    println("Latency: %.3f ms".format(result.latencyMs))
+}
+
+private fun cmdFrames(opts: Map<String, String>) {
+    val count = opts["frames"]?.toIntOrNull() ?: 10
+    val labels = opts["labels"]?.split(",")?.filter { it.isNotBlank() }
+        ?: List(count) { Shapes.LABELS[it % Shapes.LABELS.size] }
+    val seed = opts["seed"]?.toLongOrNull() ?: 42L
+    val window = opts["window"]?.toIntOrNull() ?: 5
+    val classifier = loadClassifier(opts)
+    val live = LiveClassifier(classifier, windowSize = window)
+    val camera = SimulatedCamera(labels, seed = seed)
+    var seen = 0
+    var smoothedLabel: String? = null
+    while (true) {
+        val frame = camera.next() ?: break
+        val smoothed = live.onFrame(frame) ?: continue
+        seen++
+        smoothedLabel = smoothed.label
+        println(
+            "frame %2d: raw %-8s -> smoothed %-8s (%d/%d votes, %.1f%%)".format(
+                seen, smoothed.latest.best?.label, smoothed.label,
+                smoothed.votes, smoothed.window, smoothed.confidence * 100,
+            ),
+        )
+    }
+    println("Live stream done: $seen frames, final smoothed label: $smoothedLabel")
+}
+
+private fun cmdMakePng(opts: Map<String, String>) {
+    val shape = opts["shape"] ?: run {
+        println("make-png needs --shape <label>")
+        usage()
+    }
+    val seed = opts["seed"]?.toLongOrNull() ?: 7L
+    val outPath = opts["out"] ?: run {
+        println("make-png needs --out <path>")
+        usage()
+    }
+    val gray = Shapes.generate(shape, java.util.Random(seed))
+    GalleryImages.savePng(ImageFrame(gray.toArgb(), Shapes.SIZE, Shapes.SIZE), File(outPath))
+    println("Wrote $shape (seed $seed) to $outPath")
+}
+
+private fun cmdModels(args: List<String>, opts: Map<String, String>) {
+    val store = ModelStore(storeDir(opts))
+    when (args.firstOrNull()) {
+        "install" -> {
+            val from = opts["from"] ?: run { println("models install needs --from <path>"); usage() }
+            val name = opts["name"] ?: run { println("models install needs --name <name>"); usage() }
+            val version = opts["version"]?.toIntOrNull() ?: run { println("models install needs --version N"); usage() }
+            when (val result = store.install(File(from), name, version)) {
+                is InstallResult.Installed -> println("Installed $name v${result.model.version} (${result.model.bytes} bytes, sha256 ${result.model.sha256.take(12)}...)")
+                is InstallResult.AlreadyPresent -> println("Already present: $name v${result.model.version} (identical bytes, download skipped)")
+            }
+        }
+        "list" -> {
+            val models = store.list()
+            if (models.isEmpty()) println("No models installed in ${storeDir(opts).path}")
+            val active = store.active()?.name
+            for (model in models) {
+                println("${model.name} v${model.version} ${model.bytes} bytes ${if (model.name == active) "(active)" else ""}")
+            }
+        }
+        "activate" -> {
+            val name = opts["name"] ?: run { println("models activate needs --name <name>"); usage() }
+            store.activate(name)
+            println("Active model: $name")
+        }
+        "verify" -> {
+            val name = opts["name"] ?: run { println("models verify needs --name <name>"); usage() }
+            println("$name integrity: ${if (store.verify(name)) "OK" else "FAILED"}")
+        }
+        "remove" -> {
+            val name = opts["name"] ?: run { println("models remove needs --name <name>"); usage() }
+            store.remove(name)
+            println("Removed $name")
+        }
+        else -> usage()
+    }
+}
+
 fun main(args: Array<String>) {
     if (args.isEmpty()) usage()
     val opts = parseOptions(args.drop(1).toList())
@@ -137,6 +260,10 @@ fun main(args: Array<String>) {
         "train" -> cmdTrain(opts)
         "classify" -> cmdClassify(opts)
         "benchmark" -> cmdBenchmark(opts)
+        "gallery" -> cmdGallery(opts)
+        "frames" -> cmdFrames(opts)
+        "make-png" -> cmdMakePng(opts)
+        "models" -> cmdModels(args.drop(1), opts)
         else -> usage()
     }
 }
