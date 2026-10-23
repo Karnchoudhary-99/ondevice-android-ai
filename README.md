@@ -16,7 +16,7 @@ without touching the core.
 - [x] On-device inference pipeline (custom lightweight runtime — see below)
 - [x] Camera + gallery input with live results (simulated camera + gallery PNG/JPEG, smoothed voting)
 - [x] Model management (bundled model, download-once, versioning, integrity checks)
-- [ ] Benchmarks (latency, model size) + demo
+- [x] Benchmarks (latency, model size) + demo
 - [ ] Self-review checklist, then public
 
 ## Why a custom runtime instead of TensorFlow Lite?
@@ -40,6 +40,7 @@ core/   ai.ondevice — no dependencies, no Android SDK
   Shapes.kt        synthetic 28x28 shape dataset (deterministic by seed)
   Trainer.kt       mini-batch SGD (softmax + cross-entropy, ReLU backprop)
   Classifier.kt    UI-facing API: top-k predictions + latency benchmark
+  Benchmark.kt     structured reports: latency percentiles, per-label accuracy, size breakdown, Markdown output
 demo/   CLI: train | classify | benchmark | gallery | frames | models (see examples/run-demo.sh)
 models/ shapes-model.bin — bundled trained model (see below)
 examples/ sample-triangle.png — gallery sample (triangle, seed 7)
@@ -119,16 +120,32 @@ at this model size. The int8 win here is the 4x smaller model (APK size,
 memory, download) and suitability for phone DSP/NPU kernels, where the
 integer path is what actually runs fast. Accuracy is identical either way.
 
+## Benchmark report
+
+`demo benchmark` prints mean/p50/p95/p99 latency and per-label accuracy
+for both precisions; `--report <path>` writes the full structured report
+as Markdown. The latest report for the bundled model is committed at
+[`docs/benchmarks.md`](docs/benchmarks.md) — latency over 200 runs,
+accuracy over 250 held-out examples (1.000 for every label in both
+precisions), and a per-layer size breakdown (201,984 → 50,496 bytes).
+Regenerate it with:
+
+```bash
+gradle :demo:run --args="benchmark --model models/shapes-model.bin --runs 200 --report docs/benchmarks.md"
+```
+
 ## Tests
 
-31 JUnit tests in `core/src/test`: tensor ops, quantization error
+37 JUnit tests in `core/src/test`: tensor ops, quantization error
 bounds and the 4x size claim, preprocessing contracts, ODAI save/load
 round-trip plus bad-magic rejection, top-k ranking, end-to-end shape
 classification, benchmark sanity, and decreasing training loss — plus
 the model store (download-once, downgrade rejection, corrupt-source
-safety, tamper detection, activation/removal) and the live pipeline
-(deterministic simulated camera, PNG round-trip, majority smoothing).
-CI runs `gradle build` plus a demo smoke test on every push and PR.
+safety, tamper detection, activation/removal), the live pipeline
+(deterministic simulated camera, PNG round-trip, majority smoothing),
+and benchmark reporting (nearest-rank percentiles, per-label accuracy
+with unseen labels, per-layer size breakdown, full-report consistency).
+CI runs `gradle build` plus demo smoke tests on every push and PR.
 Note: on this dev VM the Gradle daemon cannot talk over localhost, so
 local verification runs kotlinc + the JUnit console directly; GitHub
 Actions CI is the verification of record for the Gradle build.
