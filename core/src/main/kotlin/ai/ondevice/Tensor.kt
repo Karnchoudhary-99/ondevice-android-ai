@@ -1,7 +1,6 @@
 package ai.ondevice
 
 import kotlin.math.exp
-import kotlin.math.max
 
 /**
  * Minimal dense-vector math for the on-device inference core.
