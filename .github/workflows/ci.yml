@@ -19,3 +19,5 @@ jobs:
         run: gradle build --no-daemon
       - name: Demo smoke test (train + classify + benchmark, in-memory model)
         run: gradle :demo:run --no-daemon --args="benchmark --runs 50"
+      - name: Benchmark report smoke test (bundled model)
+        run: gradle :demo:run --no-daemon --args="benchmark --model models/shapes-model.bin --runs 50 --report /tmp/odai-benchmarks.md" && grep -q "## Model size" /tmp/odai-benchmarks.md
