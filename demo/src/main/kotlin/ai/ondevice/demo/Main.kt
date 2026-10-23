@@ -74,6 +74,21 @@ private fun parseOptions(args: List<String>): Map<String, String> {
 
 private fun storeDir(opts: Map<String, String>): File = File(opts["dir"] ?: "model-store")
 
+/**
+ * Resolve an input path: as given, else relative to the parent directory.
+ * `gradle :demo:run` executes with demo/ as the working directory, while a
+ * kotlinc-compiled run uses the repo root — the fallback makes --model,
+ * --image and --from work identically from both, instead of failing with
+ * a bare FileNotFoundException under Gradle.
+ */
+private fun resolveInput(path: String): File {
+    val direct = File(path)
+    if (direct.exists()) return direct
+    val parent = File("..", path)
+    if (parent.exists()) return parent
+    return direct // let the loader report the original path
+}
+
 /** A classifier from --model, else the store's active model, else a quick train. */
 private fun loadClassifier(opts: Map<String, String>): OnDeviceClassifier {
     val loaded = loadOrTrain(opts)
@@ -84,7 +99,7 @@ private fun loadClassifier(opts: Map<String, String>): OnDeviceClassifier {
 
 private fun loadOrTrain(opts: Map<String, String>, quickEpochs: Int = 30): ModelFile.Loaded {
     val modelPath = opts["model"]
-    if (modelPath != null) return ModelFile.load(File(modelPath))
+    if (modelPath != null) return ModelFile.load(resolveInput(modelPath))
     val active = ModelStore(storeDir(opts)).activeModelFile()
     if (active != null) {
         println("Using active model from the store: ${active.path}")
@@ -173,7 +188,7 @@ private fun cmdGallery(opts: Map<String, String>) {
         println("gallery needs --image <path>")
         usage()
     }
-    val frame = GalleryImages.load(File(imagePath))
+    val frame = GalleryImages.load(resolveInput(imagePath))
     val classifier = loadClassifier(opts)
     val vector = preprocessImage(frame.argb, frame.width, frame.height, 28)
     val result = classifier.classify(vector)
@@ -232,7 +247,7 @@ private fun cmdModels(args: List<String>, opts: Map<String, String>) {
             val from = opts["from"] ?: run { println("models install needs --from <path>"); usage() }
             val name = opts["name"] ?: run { println("models install needs --name <name>"); usage() }
             val version = opts["version"]?.toIntOrNull() ?: run { println("models install needs --version N"); usage() }
-            when (val result = store.install(File(from), name, version)) {
+            when (val result = store.install(resolveInput(from), name, version)) {
                 is InstallResult.Installed -> println("Installed $name v${result.model.version} (${result.model.bytes} bytes, sha256 ${result.model.sha256.take(12)}...)")
                 is InstallResult.AlreadyPresent -> println("Already present: $name v${result.model.version} (identical bytes, download skipped)")
             }
