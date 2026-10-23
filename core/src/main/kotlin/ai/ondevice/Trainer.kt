@@ -50,7 +50,7 @@ fun trainMlp(
         while (start < order.size) {
             val batch = order.subList(start, minOf(start + batchSize, order.size))
             // Gradient accumulators, zeroed per batch.
-            val gradW = layers.map { Array(it.outputSize) { FloatArray(it.inputSize) } }
+            val gradW = layers.map { layer -> Array(layer.outputSize) { FloatArray(layer.inputSize) } }
             val gradB = layers.map { FloatArray(it.outputSize) }
             for (idx in batch) {
                 val input = xs[idx]

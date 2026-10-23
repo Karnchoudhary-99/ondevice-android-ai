@@ -6,6 +6,7 @@ import ai.ondevice.Shapes
 import ai.ondevice.accuracy
 import ai.ondevice.renderAscii
 import ai.ondevice.toQuantized
+import ai.ondevice.weightBytes
 import ai.ondevice.trainMlp
 import java.io.File
 import kotlin.system.exitProcess
@@ -97,7 +98,7 @@ private fun cmdClassify(opts: Map<String, String>) {
     val seed = opts["seed"]?.toLongOrNull() ?: 7L
     val loaded = loadOrTrain(opts)
     val classifier = OnDeviceClassifier(loaded.mlp, loaded.mlp.toQuantized(), loaded.labels)
-    classifier.useQuantized = !"no-quantized" in opts
+    classifier.useQuantized = !("no-quantized" in opts)
     val image = Shapes.generate(shape, java.util.Random(seed))
     println(renderAscii(image))
     println("Input shape: $shape (seed $seed), model: ${if (classifier.useQuantized) "int8" else "float32"}")
