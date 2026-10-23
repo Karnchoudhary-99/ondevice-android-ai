@@ -9,6 +9,7 @@ import ai.ondevice.ModelStore
 import ai.ondevice.OnDeviceClassifier
 import ai.ondevice.SimulatedCamera
 import ai.ondevice.preprocessImage
+import ai.ondevice.toArgb
 import ai.ondevice.Shapes
 import ai.ondevice.accuracy
 import ai.ondevice.renderAscii
